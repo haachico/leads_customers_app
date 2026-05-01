@@ -16,7 +16,6 @@ const leadsServices = {
     try {
       connection = await pool.getConnection();
 
-      console.log("this coming");
       const allowedSortFields = ["id", "name", "email", "createdAt"];
       const allowedOrder = ["ASC", "DESC"];
 
@@ -88,8 +87,6 @@ const leadsServices = {
     try {
       connection = await pool.getConnection();
 
-      console.log(email, "email is this");
-
       const [lead] = await connection.query(
         `select * from leads where email = ?`,
         [email],
@@ -116,6 +113,15 @@ const leadsServices = {
     try {
       connection = await pool.getConnection();
 
+      const [existingLead] = await connection.query(
+        "SELECT * FROM leads WHERE id = ?",
+        [leadId],
+      );
+
+      if (!existingLead || existingLead.length === 0) {
+        throw { statusCode: 404, message: "Lead not found" };
+      }
+
       if (email) {
         const [existingEmails] = await connection.query(
           `SELECT id FROM leads WHERE email = ? AND id != ?`,
@@ -125,6 +131,11 @@ const leadsServices = {
           throw { statusCode: 400, message: "Email already exists" };
         }
       }
+
+      const existingStatus = existingLead[0].status;
+      const existingPhone = existingLead[0].phone;
+      const existingEmail = existingLead[0].email;
+      const existingName = existingLead[0].name;
       let conditions = [];
       let params = [];
 
@@ -160,6 +171,29 @@ const leadsServices = {
 
       if (result.affectedRows === 0) {
         throw { statusCode: 404, message: "Lead not found or unauthorized" };
+      }
+
+      if (status === "converted" && existingStatus !== "converted") {
+        const customerEmail = email || existingEmail;
+        const query = `select * from customers where email = ?`;
+        const [customer] = await connection.query(query, [customerEmail]);
+
+        if (customer.length === 0) {
+          try {
+            await connection.query(
+              `insert into customers (name, email, phone, leadId, userId) values (?, ?, ?, ?, ?)`,
+              [
+                name || existingName,
+                customerEmail,
+                existingPhone,
+                leadId,
+                existingLead[0].userId,
+              ],
+            );
+          } catch (error) {
+            throw { statusCode: 500, message: "Failed to create customer" };
+          }
+        }
       }
 
       return { message: "Lead updated successfully" };

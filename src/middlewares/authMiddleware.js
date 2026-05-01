@@ -25,7 +25,6 @@ const authenticationMiddleware = (req, res, next) => {
 
 const authorizationMiddleware = (requiredRoles) => {
   return (req, res, next) => {
-    console.log(requiredRoles, req.user.role, "requiredRoles");
     if (requiredRoles.includes(req.user.role)) {
       return next();
     } else {
