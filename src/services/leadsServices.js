@@ -1,4 +1,5 @@
 const pool = require("../config/db");
+const cacheUtil = require("../utils/cacheUtil");
 
 const leadsServices = {
   fetchLeads: async (
@@ -11,6 +12,25 @@ const leadsServices = {
     role,
     userid,
   ) => {
+    // 🔴 CREATE CACHE KEY
+    const cacheKey = cacheUtil.generateKey(
+      "leads",
+      page,
+      limit,
+      sort,
+      order,
+      search,
+      status,
+      role,
+      userid,
+    );
+
+    // 🟢 CHECK CACHE FIRST
+    const cached = await cacheUtil.get(cacheKey);
+    if (cached) {
+      return { ...cached, fromCache: true };
+    }
+
     let connection;
 
     try {
@@ -64,7 +84,8 @@ const leadsServices = {
 
       const totalResult = await connection.query(countQuery, params);
       const total = totalResult[0][0].count;
-      return {
+
+      const result = {
         leads: rows,
         pagination: {
           page,
@@ -72,7 +93,13 @@ const leadsServices = {
           total: total,
           totalPages: Math.ceil(total / limit),
         },
+        fromCache: false,
       };
+
+      // 💾 STORE IN CACHE (5 minutes = 300 seconds)
+      await cacheUtil.set(cacheKey, result, 300);
+
+      return result;
     } catch (error) {
       console.error("Error fetching leads:", error.message);
       throw error;

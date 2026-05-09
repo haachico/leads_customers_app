@@ -4,6 +4,7 @@ const {
   updateLead,
   removeLead,
 } = require("../services/leadsServices");
+const cacheUtil = require("../utils/cacheUtil");
 
 const leadsController = {
   getLeads: async (req, res) => {
@@ -16,6 +17,8 @@ const leadsController = {
       const status = req.query.status || null;
       const role = req.user.role || null;
       const userId = req.user.id;
+
+      // ✅ SERVICE HANDLES ALL CACHING INTERNALLY
       const result = await fetchLeads(
         page,
         limit,
@@ -31,6 +34,7 @@ const leadsController = {
         success: true,
         data: result.leads,
         pagination: result.pagination,
+        fromCache: result.fromCache, // From service
       });
     } catch (error) {
       const statusCode = error.statusCode || 500;
@@ -48,6 +52,10 @@ const leadsController = {
       }
 
       const result = await addLead(name, email, status, userId);
+
+      // 🗑️  INVALIDATE ALL LEADS CACHE
+      await cacheUtil.deletePattern("leads:*");
+
       res.status(201).json({ success: true, data: result });
     } catch (error) {
       const statusCode = error.statusCode || 500;
@@ -70,6 +78,10 @@ const leadsController = {
         role,
         roleId,
       );
+
+      // 🗑️  INVALIDATE ALL LEADS CACHE
+      await cacheUtil.deletePattern("leads:*");
+
       res.status(200).json({ success: true, data: result });
     } catch (error) {
       const statusCode = error.statusCode || 500;
@@ -85,6 +97,10 @@ const leadsController = {
       const userId = req.user.id;
 
       const result = await removeLead(leadId, role, userId);
+
+      // 🗑️  INVALIDATE ALL LEADS CACHE
+      await cacheUtil.deletePattern("leads:*");
+
       res.status(200).json({ success: true, data: result });
     } catch (error) {
       const statusCode = error.statusCode || 500;
