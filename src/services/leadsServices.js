@@ -1,5 +1,6 @@
 const pool = require("../config/db");
 const cacheUtil = require("../utils/cacheUtil");
+const leadImportQueue = require("../queues/leadImportQueue");
 
 const leadsServices = {
   fetchLeads: async (
@@ -255,6 +256,138 @@ const leadsServices = {
         throw { statusCode: 404, message: "Lead not found or unauthorized" };
       }
       return { message: "Lead deleted successfully" };
+    } finally {
+      if (connection) connection.release();
+    }
+  },
+
+  // ============================================
+  // BULK IMPORT FUNCTIONS
+  // ============================================
+
+  submitBulkImport: async (file, userId) => {
+    let connection;
+    try {
+      // Validate file type
+      const allowedMimes = [
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+        "text/csv",
+      ];
+
+      if (!allowedMimes.includes(file.mimetype)) {
+        throw {
+          statusCode: 400,
+          code: "INVALID_FILE_TYPE",
+          message: "Only Excel (.xlsx, .xls) or CSV files allowed",
+        };
+      }
+
+      // Check file size (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        throw {
+          statusCode: 400,
+          code: "FILE_TOO_LARGE",
+          message: "File size exceeds 10MB limit",
+        };
+      }
+
+      const jobId = `lead_import_${userId}_${Date.now()}`;
+
+      connection = await pool.getConnection();
+
+      // Insert import job record in DB (for tracking)
+      await connection.query(
+        `INSERT INTO import_jobs (job_id, user_id, filename, status, total_records, processed_records, failed_records, created_at) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+        [jobId, userId, file.originalname, "queued", 0, 0, 0],
+      );
+
+      // Add job to queue (Bull) - completely detached from HTTP request
+      // Convert buffer to base64 for Redis serialization
+      const fileBase64 = file.buffer.toString("base64");
+
+      const job = await leadImportQueue.add(
+        {
+          fileBase64: fileBase64, // Send as base64 string, not Buffer
+          fileName: file.originalname,
+          uploadedBy: userId,
+          jobId: jobId,
+        },
+        {
+          attempts: 3,
+          backoff: { type: "exponential", delay: 2000 },
+          removeOnComplete: true,
+          removeOnFail: false,
+          priority: 5,
+        },
+      );
+
+      return {
+        jobId: jobId, // ✅ Return our jobId, not Bull's job.id
+        fileName: file.originalname,
+        estimatedTime: "5-10 minutes for 1000 leads",
+      };
+    } finally {
+      if (connection) connection.release();
+    }
+  },
+
+  checkImportStatus: async (jobId) => {
+    let connection;
+    try {
+      connection = await pool.getConnection();
+
+      // Query import_jobs table for job status
+      const [jobs] = await connection.query(
+        `SELECT * FROM import_jobs WHERE job_id = ?`,
+        [jobId],
+      );
+
+      if (!jobs || jobs.length === 0) {
+        throw {
+          statusCode: 404,
+          code: "JOB_NOT_FOUND",
+          message: "Job not found",
+        };
+      }
+
+      const jobRecord = jobs[0];
+
+      return {
+        jobId: jobRecord.job_id,
+        status: jobRecord.status,
+        progress: `${jobRecord.progress}%`, // Use actual progress from DB (10, 30, 50, 80, 100)
+        result:
+          jobRecord.status === "completed"
+            ? {
+                importedCount: jobRecord.processed_records,
+                failedCount: jobRecord.failed_records,
+                duplicateCount:
+                  jobRecord.total_records - jobRecord.processed_records,
+              }
+            : null,
+        error: jobRecord.error_message,
+        timestamps: {
+          created: jobRecord.created_at,
+          finished: jobRecord.completed_at,
+        },
+      };
+    } finally {
+      if (connection) connection.release();
+    }
+  },
+
+  getImportJobHistory: async () => {
+    let connection;
+    try {
+      connection = await pool.getConnection();
+
+      const [imports] = await connection.query(
+        `SELECT * FROM import_jobs ORDER BY created_at DESC LIMIT 20`,
+      );
+
+      return imports;
     } finally {
       if (connection) connection.release();
     }

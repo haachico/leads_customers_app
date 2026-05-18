@@ -3,6 +3,9 @@ const {
   addLead,
   updateLead,
   removeLead,
+  submitBulkImport,
+  checkImportStatus,
+  getImportJobHistory,
 } = require("../services/leadsServices");
 const cacheUtil = require("../utils/cacheUtil");
 
@@ -106,6 +109,84 @@ const leadsController = {
       const statusCode = error.statusCode || 500;
       const message = error.message || "Internal Server Error";
       res.status(statusCode).json({ message });
+    }
+  },
+
+  // ============================================
+  // BULK IMPORT METHODS
+  // ============================================
+
+  submitLeadImport: async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: "No file uploaded",
+          error: { code: "NO_FILE" },
+        });
+      }
+
+      const userId = req.user.id;
+      const result = await submitBulkImport(req.file, userId);
+
+      // 🗑️  INVALIDATE ALL LEADS CACHE
+      await cacheUtil.deletePattern("leads:*");
+
+      res.status(202).json({
+        success: true,
+        message: "Lead import started in background",
+        statusCode: 202,
+        data: result,
+      });
+    } catch (error) {
+      const statusCode = error.statusCode || 500;
+      const message = error.message || "Error starting import";
+      res.status(statusCode).json({
+        success: false,
+        message,
+        error: { code: error.code || "IMPORT_ERROR" },
+      });
+    }
+  },
+
+  getImportStatus: async (req, res) => {
+    try {
+      const { jobId } = req.params;
+      const result = await checkImportStatus(jobId);
+
+      res.status(200).json({
+        success: true,
+        data: result,
+        statusCode: 200,
+      });
+    } catch (error) {
+      const statusCode = error.statusCode || 500;
+      const message = error.message || "Error fetching import status";
+      res.status(statusCode).json({
+        success: false,
+        message,
+        error: { code: error.code || "STATUS_ERROR" },
+      });
+    }
+  },
+
+  getImportHistory: async (req, res) => {
+    try {
+      const result = await getImportJobHistory();
+
+      res.status(200).json({
+        success: true,
+        data: result,
+        statusCode: 200,
+      });
+    } catch (error) {
+      const statusCode = error.statusCode || 500;
+      const message = error.message || "Error fetching import history";
+      res.status(statusCode).json({
+        success: false,
+        message,
+        error: { code: error.code || "HISTORY_ERROR" },
+      });
     }
   },
 };

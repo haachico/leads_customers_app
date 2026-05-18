@@ -25,6 +25,11 @@ app.use("/api", usersRoutes);
 const leadsRoutes = require("./routes/leadsRoutes");
 app.use("/api", leadsRoutes);
 
+// ============================================
+// START BACKGROUND WORKERS
+// ============================================
+require("./workers/leadImportWorker"); // Starts Bull queue consumer
+
 const db = require("./config/db"); // adjust path if needed
 
 app.get("/", (req, res) => {
